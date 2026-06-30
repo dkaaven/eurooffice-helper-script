@@ -67,15 +67,10 @@ install_dependencies() {
   msg_info "Installing dependencies"
 
   apt-get install -y \
-    curl \
-    wget \
-    gnupg \
-    ca-certificates \
-    lsb-release \
-    unzip \
-    apt-transport-https \
-    software-properties-common \
-    openssl \
+    curl wget jq gnupg ca-certificates openssl \
+    lsb-release unzip apt-transport-https
+
+  apt-get install -y \
     fonts-dejavu \
     fonts-liberation \
     fonts-crosextra-carlito \
