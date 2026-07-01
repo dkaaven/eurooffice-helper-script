@@ -7,9 +7,9 @@ source <(curl -fsSL https://raw.githubusercontent.com/dkaaven/ProxmoxVE/main/mis
 
 APP="ProtonMailBridge"
 var_tags="${var_tags:-mail}"
-var_description="${var_description:-Collaborative online office suite}"
+var_description="${var_description:-Proton Mail Bridge for IMAP/SMTP access}"
 
-var_disk="${var_disk:-50}"
+var_disk="${var_disk:-20}"
 var_cpu="${var_cpu:-1}"
 var_ram="${var_ram:-2048}"
 
@@ -36,5 +36,3 @@ description
 
 msg_ok "Completed successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
-echo -e "${INFO}${YW}Access EuroOffice using:${CL}"
-echo -e "${GATEWAY}${BGN}http://${IP}${CL}"
