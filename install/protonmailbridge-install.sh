@@ -26,7 +26,7 @@ update_system() {
 install_dependencies() {
   msg_info "Installing dependencies"
 
-  apt-get install -y curl jq
+  apt-get install -y curl jq wget
 
   msg_ok "Dependencies installed"
 }
@@ -78,14 +78,18 @@ After=network-online.target
 [Service]
 User=protonmail
 Group=protonmail
+WorkingDirectory=/home/protonmail
+Environment=HOME=/home/protonmail
 ExecStart=/usr/bin/protonmail-bridge --noninteractive
-Restart=always
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 
 EOF
-  systemctl enable protonmail; systemctl start protonmail
+  systemctl daemon-reload
+  systemctl enable protonmail
 
   msg_ok "Service created and enabled"
 }
@@ -106,6 +110,7 @@ configure_mailbridge() {
 ============================================================
 
 Next step (interactive)
+1. The Bridge CLI will now start.
 
 2. Login to your Proton account.
 
@@ -137,6 +142,8 @@ EOF
 cleanup() {
   msg_info "Cleaning up"
 
+  systemctl start protonmail
+  rm -f /tmp/protonmail-bridge.deb
   apt-get -y autoremove
   apt-get -y autoclean
 
