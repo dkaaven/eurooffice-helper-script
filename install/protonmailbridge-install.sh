@@ -10,6 +10,8 @@
 username="protonmail"
 
 set -euo pipefail
+type color
+type msg_info
 color
 verb_ip6
 catch_errors
