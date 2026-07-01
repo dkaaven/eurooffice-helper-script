@@ -164,5 +164,4 @@ cleanup
 motd_ssh
 customize
 
-get_bootstrap_code
 msg_ok "Installation finished"
