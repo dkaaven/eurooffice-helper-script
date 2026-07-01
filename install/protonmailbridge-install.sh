@@ -3,56 +3,16 @@
 # Copyright (c) 2021-2026 community-scripts ORG
 # Author: Daniel Kåven (dkaaven)
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
-# Source: https://github.com/dkaaven/eurooffice-helper-script
+# Source: https://github.com/dkaaven/mailbridge-helper-script
+# Inspiration: https://help.nextcloud.com/t/how-to-use-proton-mail-with-nextcloud-mail/230647
 
 # Config:
-DB_NAME="ds"
-DB_USER="ds"
-DB_PASS="$(openssl rand -base64 24)"
-
-RABBIT_USER="eurooffice"
-RABBIT_PASS="$(openssl rand -base64 24)"
-
-REDIS_PASS="$(openssl rand -base64 24)"
-
-JWT_SECRET="$(openssl rand -hex 32)"
-
-CRED_FILE="/root/eurooffice.creds"
-
-source /dev/stdin <<< "$FUNCTIONS_FILE_PATH"
+username="protonmail"
 
 set -euo pipefail
 color
 verb_ip6
 catch_errors
-
-create_creds() {
-  cat > "$CRED_FILE" <<EOF
-EuroOffice Credentials
-======================
-
-PostgreSQL
-----------
-Database: ${DB_NAME}
-Username: ${DB_USER}
-Password: ${DB_PASS}
-
-RabbitMQ
----------
-Username: ${RABBIT_USER}
-Password: ${RABBIT_PASS}
-
-Redis
------
-Password: ${REDIS_PASS}
-
-EuroOffice
-----------
-JWT Secret: ${JWT_SECRET}
-EOF
-
-  chmod 600 "$CRED_FILE"
-}
 
 update_system() {
   msg_info "Updating container"
@@ -66,235 +26,111 @@ update_system() {
 install_dependencies() {
   msg_info "Installing dependencies"
 
-  apt-get install -y \
-    curl wget jq gnupg ca-certificates openssl \
-    lsb-release unzip apt-transport-https
-
-  apt-get install -y \
-    fonts-dejavu \
-    fonts-liberation \
-    fonts-crosextra-carlito \
-    fonts-opensymbol
+  apt-get install -y curl jq
 
   msg_ok "Dependencies installed"
 }
 
-install_postgresql() {
-  msg_info "Installing PostgreSQL"
+create_local_user() {
+  msg_info "Creating local user"
+  local username="$1"
 
-  apt-get install -y postgresql postgresql-contrib
-
-  systemctl enable postgresql
-  systemctl start postgresql
-
-  msg_ok "PostgreSQL installed"
+  id -u "$username" &>/dev/null || \
+    useradd --system --create-home --shell /usr/sbin/nologin "$username"
+  msg_ok "Created user $username"
 }
 
-configure_postgresql() {
-  msg_info "Configuring PostgreSQL"
-
-  until sudo -u postgres pg_isready >/dev/null 2>&1; do
-    sleep 1
-  done
-
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1; then
-    sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
-  fi
-
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1; then
-    sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
-  fi
-
-  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
-
-  msg_ok "PostgreSQL configured"
-}
-
-install_rabbitmq() {
-  msg_info "Installing RabbitMQ"
-
-  apt-get install -y rabbitmq-server
-
-  systemctl enable rabbitmq-server
-  systemctl start rabbitmq-server
-
-  msg_ok "RabbitMQ installed"
-}
-
-configure_rabbitmq() {
-  msg_info "Configuring RabbitMQ"
-
-  if ! rabbitmqctl list_users | awk '{print $1}' | grep -qx "${RABBIT_USER}"; then
-    rabbitmqctl add_user "${RABBIT_USER}" "${RABBIT_PASS}"
-  fi
-  rabbitmqctl set_permissions -p / "${RABBIT_USER}" ".*" ".*" ".*"
-  rabbitmqctl set_user_tags "${RABBIT_USER}" management
-
-  msg_ok "RabbitMQ configured"
-}
-
-install_redis() {
-  msg_info "Installing Redis"
-
-  apt-get install -y redis-server
-
-  systemctl enable redis-server
-  systemctl start redis-server
-
-  msg_ok "Redis installed"
-}
-
-configure_redis() {
-  msg_info "Configuring Redis"
-
-  local CONF="/etc/redis/redis.conf"
-
-  [[ -f "${CONF}.bak" ]] || cp "${CONF}" "${CONF}.bak"
-
-  if grep -q '^# *requirepass' "$CONF"; then
-    sed -i "s/^# *requirepass.*/requirepass ${REDIS_PASS}/" "$CONF"
-  elif grep -q '^requirepass' "$CONF"; then
-    sed -i "s/^requirepass.*/requirepass ${REDIS_PASS}/" "$CONF"
-  else
-    echo "requirepass ${REDIS_PASS}" >> "$CONF"
-  fi
-  if grep -q '^bind ' "$CONF"; then
-    sed -i 's/^bind .*/bind 127.0.0.1 ::1/' "$CONF"
-  else
-    echo "bind 127.0.0.1 ::1" >> "$CONF"
-  fi
-
-  if grep -q '^protected-mode' "$CONF"; then
-    sed -i 's/^protected-mode .*/protected-mode yes/' "$CONF"
-  else
-    echo "protected-mode yes" >> "$CONF"
-  fi
-
-  systemctl restart redis-server
-
-  msg_ok "Redis configured"
-}
-
-install_nginx() {
-  msg_info "Installing Nginx"
-
-  apt-get install -y nginx
-
-  systemctl enable nginx
-  systemctl start nginx
-
-  msg_ok "Nginx installed"
-}
 
 _get_latest_deb_url() {
-  curl -fsSL \
-    https://api.github.com/repos/Euro-Office/DocumentServer/releases |
-  jq -r '
-    .[]
-    | select(.prerelease == false and .draft == false)
-    | .assets[]
-    | select(.name | endswith("_amd64.deb"))
-    | select(.name | test("(dev|beta|rc)") | not)
-    | .browser_download_url
-    ' | head -n1
+  local api="https://api.github.com/repos/ProtonMail/proton-bridge/releases/latest"
+
+  curl -fsSL "$api" |
+    jq -r '.assets[]
+      | select(.name | endswith("_amd64.deb"))
+      | .browser_download_url'
 }
 
-preseed_eurooffice() {
-  msg_info "Preseeding EuroOffice"
+install_mailbridge() {
+  msg_info "Installing Proton Mail Bridge"
 
-  cat <<EOF | debconf-set-selections
-euro-office-documentserver ds/db-type select postgres
-euro-office-documentserver ds/db-host string localhost
-euro-office-documentserver ds/db-port string 5432
-euro-office-documentserver ds/db-name string ${DB_NAME}
-euro-office-documentserver ds/db-user string ${DB_USER}
-euro-office-documentserver ds/db-pwd password ${DB_PASS}
+  local url
+  url="$(_get_latest_deb_url)"
 
-euro-office-documentserver ds/rabbitmq-host string localhost
-euro-office-documentserver ds/rabbitmq-proto string amqp
-euro-office-documentserver ds/rabbitmq-user string ${RABBIT_USER}
-euro-office-documentserver ds/rabbitmq-pwd password ${RABBIT_PASS}
-
-euro-office-documentserver ds/jwt-enabled boolean true
-euro-office-documentserver ds/jwt-secret password ${JWT_SECRET}
-euro-office-documentserver ds/jwt-header string Authorization
-
-euro-office-documentserver ds/docservice-port string 8000
-euro-office-documentserver ds/example-port string 3000
-euro-office-documentserver ds/ds-port string 80
-
-euro-office-documentserver ds/plugins-enabled boolean false
-euro-office-documentserver ds/wopi-enabled boolean false
-euro-office-documentserver ds/cluster-mode boolean false
-euro-office-documentserver ds/remove-db boolean false
-EOF
-
-  msg_ok "EuroOffice preseeded"
-}
-
-install_eurooffice() {
-  msg_info "Installing EuroOffice"
-
-  URL="$(_get_latest_deb_url)"
-  echo "$URL"
-  if [[ -n "$URL" ]]; then
-    wget -q "$URL" -O /tmp/eurooffice.deb
-    DEBIAN_FRONTEND=noninteractive \
-    apt-get install -y /tmp/eurooffice.deb
-  else
-      msg_error "No Debian package found in the latest release."
-      exit 1
+  if [[ -z "$url" ]]; then
+    msg_error "Failed to determine latest Proton Mail Bridge package."
+    exit 1
   fi
+  wget -q --show-progress "$url" -O /tmp/protonmail-bridge.deb
+  DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/protonmail-bridge.deb
 
-  msg_ok "EuroOffice installed"
+  msg_ok "Proton Mail Bridge installed"
 }
 
 
+create_service() {
+  msg_info "Creating Proton Mail Bridge Service"
+  touch /etc/systemd/system/protonmail.service
+  cat >/etc/systemd/system/protonmail.service <<EOF
+[Unit]
+Description=Proton Mail Bridge
+After=network-online.target
 
-configure_eurooffice() {
-  msg_info "Configuring EuroOffice"
+[Service]
+User=protonmail
+Group=protonmail
+ExecStart=/usr/bin/protonmail-bridge --noninteractive
+Restart=always
 
-  sudo systemctl start ds-adminpanel
-  sudo systemctl enable ds-adminpanel
-
-
-
-  msg_ok "Installation inspected"
-}
-
-get_bootstrap_code() {
-  msg_info "Waiting for EuroOffice bootstrap token"
-
-  local TOKEN=""
-
-  for _ in {1..30}; do
-    TOKEN=$(
-      journalctl -u ds-adminpanel.service --no-pager -n 50 \
-      | sed -n 's/.*Bootstrap code: \([A-Z0-9]\+\).*/\1/p' \
-      | tail -n1
-    )
-
-    [[ -n "$TOKEN" ]] && break
-    sleep 2
-  done
-
-  if [[ -n "$TOKEN" ]]; then
-    msg_ok "Bootstrap token found"
-
-    cat <<EOF
-
-${INFO}EuroOffice Initial Setup${CL}
-${GATEWAY}${BGN}http://${IP}/admin${CL}
-
-Bootstrap Code:
-${BGN}${TOKEN}${CL}
+[Install]
+WantedBy=multi-user.target
 
 EOF
-  else
-    msg_warn "Bootstrap token not found."
-    msg_info "Retrieve it with:"
-    echo "journalctl -u ds-adminpanel.service | grep 'Bootstrap code'"
-  fi
+  systemctl enable protonmail; systemctl start protonmail
+
+  msg_ok "Service created and enabled"
+}
+
+configure_mailbridge() {
+  msg_info "Configuring Proton Mail Bridge"
+
+  # Enable and start the service
+  systemctl enable --now protonmail-bridge
+
+  # Wait for the daemon to start
+  sleep 2
+
+  msg_ok "Proton Mail Bridge service started"
+
+  cat <<EOF
+
+============================================================
+
+Next step (interactive)
+
+2. Login to your Proton account.
+
+3. Complete MFA if prompted.
+
+4. Create a Mail Bridge account:
+    >>> info
+    >>> ls
+    >>> configure
+
+5. Note the generated:
+    - Username
+    - Password
+    - IMAP port (1143)
+    - SMTP port (1025)
+
+6. Configure Nextcloud Mail using:
+    IMAP: 127.0.0.1:1143
+    SMTP: 127.0.0.1:1025
+
+============================================================
+
+EOF
+  runuser -u protonmail -- protonmail-bridge --cli
+  msg_ok "Proton Mail Bridge Configured"
 }
 
 
@@ -309,22 +145,12 @@ cleanup() {
 
 update_system
 install_dependencies
-create_creds
 
-install_postgresql
-configure_postgresql
+create_local_user "$username"
 
-install_rabbitmq
-configure_rabbitmq
-
-install_redis
-configure_redis
-
-install_nginx
-
-preseed_eurooffice
-install_eurooffice
-configure_eurooffice
+install_mailbridge
+configure_mailbridge
+create_service
 
 cleanup
 
